@@ -1,3 +1,9 @@
+#pragma once
+#include <string>
+#include <vector>
+
+using namespace std;
+
 class Codec {
 public:
     string encode(vector<string>& strs) {
@@ -7,17 +13,17 @@ public:
         }
         return encoded;
     }
-        vector<string> decode(string s) {
+    vector<string> decode(string s) {
         vector<string> result;
         int i = 0;
         int n = s.size();
-
         while (i < n) {
             int j = i;
-            while (s[j] != '#') {
+            while (j < n && s[j] != '#') { 
                 j++;
             }
-            int len = stoi(s.substr(i, j - i));
+            if (j >= n) break; 
+	    int len = stoi(s.substr(i, j - i));
             i = j + 1;
             result.push_back(s.substr(i, len));
             i += len;
