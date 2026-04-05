@@ -6,7 +6,7 @@ using namespace std;
 
 class Codec {
 public:
-    string encode(vector<string>& strs) {
+    string encode(const vector<string>& strs) {
         string encoded = "";
         for (const string& s : strs) {
             encoded += to_string(s.size()) + "#" + s;

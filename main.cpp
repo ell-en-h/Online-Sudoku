@@ -1,53 +1,107 @@
-#include "network/TcpServer.hpp"
-#include "common/SudokuBoard.hpp"
-#include "common/codec.h"
 #include <iostream>
-#include <vector>
 #include <string>
+#include <vector>
+#include <mutex>
+#include <algorithm>
+#include <sstream>
+#include <signal.h>
+#include "network/TcpServer.hpp"
+#include "common/codec.h"
+#include "common/SudokuBoard.hpp"
 
 using namespace SimpleNet;
 
-int main() {
-    try {
-        TcpServer server(1234, 4);
-        Codec codec;
-        SudokuBoard gameBoard;
-        gameBoard.initializeRandom(15);
-        server.run([&codec, &gameBoard](Socket client) {
-            std::vector<std::string> initial = { gameBoard.toString() };
-            client.send(codec.encode(initial));
-		while (true) {
-                auto data = client.receive();
-                if (data.empty()) break;
-                std::string msg(data.begin(), data.end());
-                std::vector<std::string> commands = codec.decode(msg);
-                if (commands.size() >= 4 && commands[0] == "PUT") {
-                    try {
-                        int r = std::stoi(commands[1]);
-                        int c = std::stoi(commands[2]);
-                        int v = std::stoi(commands[3]);
-                        if (gameBoard.isValid(r, c, v)) {
-                            gameBoard.setCell(r, c, v);
-                            std::cout << "Update: [" << r << "," << c << "] = " << v << std::endl;
+SudokuBoard board;
+std::vector<Socket*> clients;
+std::mutex clientsMutex;
+Codec codec;
 
-                            std::vector<std::string> res = { gameBoard.toString() };
-                            client.send(codec.encode(res));
+void broadcast(const std::string& data) {
+    std::lock_guard<std::mutex> lock(clientsMutex);
+    for (auto it = clients.begin(); it != clients.end(); ) {
+        try {
+            (*it)->send(data);
+            ++it;
+        } catch (...) {
+            it = clients.erase(it);
+        }
+    }
+}
+
+void signalHandler(int signum) {
+    std::cout << "\n[SERVER] Shutting down" << std::endl;
+    exit(signum);
+}
+
+void mainHandler(Socket clientSocket) {
+    Socket* ptr = &clientSocket;
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex);
+        clients.push_back(ptr);
+    }
+    
+    std::cout << "[SERVER] New client connected. Total clients: " << clients.size() << std::endl;
+    
+    clientSocket.send(codec.encode({board.toString()}));
+
+    try {
+        while (true) {
+            auto data = clientSocket.receive();
+            if (data.empty()) break;
+            
+            std::string msg(data.begin(), data.end());
+            std::vector<std::string> cmds = codec.decode(msg);
+            
+            for (const auto& cmd_str : cmds) {
+                std::stringstream ss(cmd_str);
+                std::string action; 
+                ss >> action;
+                
+                if (action == "PUT") {
+                    int r, c, v;
+                    if (ss >> r >> c >> v) {
+                        std::cout << "[MOVE] Client tries: Row=" << r << " Col=" << c << " Val=" << v << std::endl;
+
+                        if (board.isValid(r - 1, c - 1, v)) {
+                            board.setCell(r - 1, c - 1, v);
+                            broadcast(codec.encode({board.toString()}));
+                            
+                            if (board.isFull()) {
+				    std::cout << "[GAME OVER] Board is full" << std::endl;    
+                                broadcast(codec.encode({"WIN"}));
+                            }
                         } else {
-                            std::vector<std::string> err = {"ERROR", "Invalid move"};
-                            client.send(codec.encode(err));
+                            std::cout << "[REJECTED] Move is invalid" << std::endl;
+                            clientSocket.send(codec.encode({"ERROR"}));
                         }
-                    } catch (...) {
-                        std::vector<std::string> err = {"ERROR", "Invalid format"};
-                        client.send(codec.encode(err));
                     }
-                } else {
-                    std::vector<std::string> err = {"ERROR", "Unknown command"};
-                    client.send(codec.encode(err));
                 }
             }
-        });
-    } catch (const std::exception& e) {
-        std::cerr << "Critical Error: " << e.what() << std::endl;
+        }
+    } catch (...) {}
+
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex);
+        clients.erase(std::remove(clients.begin(), clients.end(), ptr), clients.end());
     }
+    std::cout << "[SERVER] Client disconnected" << clients.size() << std::endl;
+}
+
+int main() {
+    signal(SIGINT, signalHandler);
+    
+    std::cout << "[SERVER] Generating new Sudoku puzzle..." << std::endl;
+    board.initializeRandom(40);
+    
+    std::cout << "[SERVER] Waiting for players..." << std::endl;
+    
+    try {
+        TcpServer server(1234, 4);
+        server.run(mainHandler);
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] " << e.what() << std::endl;
+        return 1;
+    }
+    
     return 0;
 }
