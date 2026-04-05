@@ -1,4 +1,4 @@
-#Online-Sudoku
+# Online-Sudoku
 
 TCP Networking: Архитектура «клиент-сервер» на базе сокетов.
 
